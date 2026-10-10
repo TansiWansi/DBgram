@@ -1,0 +1,33 @@
+{
+    "name": "dbgram-elasticsearch-sink",
+    "config": {
+        "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+        "connection.url": "http://elasticsearch:9200",
+        "type.name": "_doc",
+
+        "topics": "dbgram.cdc.users,dbgram.cdc.posts,dbgram.cdc.communities",
+
+        "transforms": "extractKey,topicIndex",
+
+        "transforms.extractKey.type": "org.apache.kafka.connect.transforms.ValueToKey",
+        "transforms.extractKey.fields": "id",
+
+        "transforms.topicIndex.type": "org.apache.kafka.connect.transforms.RegexRouter",
+        "transforms.topicIndex.regex": "dbgram\\.cdc\\.(.*)",
+        "transforms.topicIndex.replacement": "dbgram_$1",
+
+        "key.ignore": false,
+        "schema.ignore": true,
+        "behavior.on.null.values": "delete",
+        "behavior.on.malformed.documents": "warn",
+        "write.method": "upsert",
+
+        "batch.size": 200,
+        "max.in.flight.requests": 5,
+        "flush.timeout.ms": 10000,
+        "linger.ms": 1000,
+        "max.buffered.records": 20000,
+        "max.retries": 5,
+        "retry.backoff.ms": 3000
+    }
+}

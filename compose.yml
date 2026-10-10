@@ -1,0 +1,94 @@
+name: dbgram
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dbgram
+      POSTGRES_USER: dbgram
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U dbgram -d dbgram"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    networks: [internal]
+
+  # Optional local database UI: docker compose --profile tools up -d postgres adminer
+  adminer:
+    image: adminer:6.1.1-standalone
+    profiles: [tools]
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "127.0.0.1:${ADMINER_PORT:-8082}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal, outbound]
+
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    init: true
+    environment:
+      SPRING_PROFILES_ACTIVE: portable
+      SERVER_ADDRESS: 0.0.0.0
+      PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/dbgram
+      SPRING_DATASOURCE_USERNAME: dbgram
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      CORS_ORIGINS: ${APP_ORIGIN:?Set APP_ORIGIN in .env}
+      COOKIE_SECURE: "true"
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      DBGRAM_STORAGE_PATH: /app/uploads
+      DBGRAM_PUBLIC_URL: ${APP_ORIGIN}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-}
+      DBGRAM_ADMIN_USER_IDS: ${DBGRAM_ADMIN_USER_IDS:-}
+      DBGRAM_TRANSCODE_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
+    volumes:
+      - media_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 40s
+    networks: [internal, outbound]
+
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [internal, outbound]
+
+volumes:
+  postgres_data:
+  media_data:
+  caddy_data:
+  caddy_config:
+networks:
+  internal:
+    internal: true
+  outbound:

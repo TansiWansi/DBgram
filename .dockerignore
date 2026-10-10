@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+.runtime
+artifacts
+**/node_modules
+**/target
+**/dist
+**/.expo
+**/*.log
+
+**/.env
+**/.env.*

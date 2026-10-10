@@ -1,0 +1,172 @@
+services:
+  # ═══════════════════════════════════════════════════════════════
+  # PostgreSQL 16 — ACID (Users, Posts, Communities, Billing, ACL)
+  # ═══════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: dbgram-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dbgram
+      POSTGRES_USER: dbgram
+      POSTGRES_PASSWORD: dbgram_secret
+    ports:
+      - "127.0.0.1:${DATABASE_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U dbgram" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ═══════════════════════════════════════════════════════════════
+  # Cassandra 4 — Wide-Column (Messages, Likes, Feeds, Notifs)
+  # ═══════════════════════════════════════════════════════════════
+  cassandra:
+    image: cassandra:4.1
+    container_name: dbgram-cassandra
+    restart: unless-stopped
+    environment:
+      CASSANDRA_CLUSTER_NAME: dbgram-cluster
+      CASSANDRA_DC: dc1
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 100M
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: [ "CMD-SHELL", "cqlsh -e 'describe cluster'" ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ═══════════════════════════════════════════════════════════════
+  # Redis 7 — Caching, Rate Limits, Feed Fan-Out, TTLs
+  # ═══════════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: dbgram-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ═══════════════════════════════════════════════════════════════
+  # Zookeeper — Kafka coordination
+  # ═══════════════════════════════════════════════════════════════
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.0
+    container_name: dbgram-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Apache Kafka — Event Streaming
+  # ═══════════════════════════════════════════════════════════════
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: dbgram-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_started
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: [ "CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ═══════════════════════════════════════════════════════════════
+  # Elasticsearch 8 — Full-Text Search, Autocomplete
+  # ═══════════════════════════════════════════════════════════════
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    container_name: dbgram-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ═══════════════════════════════════════════════════════════════
+  # MinIO — S3-Compatible Object Storage (Media, Uploads)
+  # ═══════════════════════════════════════════════════════════════
+  minio:
+    image: coollabsio/minio:latest
+    container_name: dbgram-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: dbgram_minio
+      MINIO_ROOT_PASSWORD: dbgram_minio_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  # ═══════════════════════════════════════════════════════════════
+  # Debezium Connect — CDC from Postgres → Kafka → Elasticsearch
+  # ═══════════════════════════════════════════════════════════════
+  debezium:
+    image: debezium/connect:2.7.0.Final
+    container_name: dbgram-debezium
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: dbgram-debezium
+      CONFIG_STORAGE_TOPIC: dbgram_connect_configs
+      OFFSET_STORAGE_TOPIC: dbgram_connect_offsets
+      STATUS_STORAGE_TOPIC: dbgram_connect_statuses
+    ports:
+      - "8083:8083"
+
+volumes:
+  pgdata:
+  cassandra_data:
+  redis_data:
+  es_data:
+  minio_data:

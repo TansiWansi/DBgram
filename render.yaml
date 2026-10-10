@@ -1,0 +1,48 @@
+# A paid service and durable storage for the initial public deployment.
+# Review Render's displayed monthly cost before creating these resources.
+services:
+  - type: web
+    name: dbgram
+    runtime: docker
+    region: singapore
+    plan: 1c-2g
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: "off"
+    healthCheckPath: /actuator/health
+    disk:
+      name: dbgram-media
+      mountPath: /app/uploads
+      sizeGB: 10
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: portable
+      - key: SERVER_ADDRESS
+        value: 0.0.0.0
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dbgram-postgres
+          property: connectionString
+      - key: DATABASE_SSL_MODE
+        value: require
+      - key: DATABASE_POOL_SIZE
+        value: "10"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DBGRAM_STORAGE_PATH
+        value: /app/uploads
+      - key: DBGRAM_TRANSCODE_ENABLED
+        value: "true"
+databases:
+  - name: dbgram-postgres
+    region: singapore
+    plan: 0.5c-1g
+    postgresMajorVersion: "16"
+    databaseName: dbgram
+    user: dbgram
+    diskSizeGB: 15
+    ipAllowList: []
+
